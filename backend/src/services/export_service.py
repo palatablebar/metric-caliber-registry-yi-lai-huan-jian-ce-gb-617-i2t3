@@ -8,6 +8,7 @@ from src.constants.enums import (
     CHANGE_KIND_LABELS,
     CHANGE_STATUS_LABELS,
     CONFLICT_KIND_LABELS,
+    CYCLE_CHECK_LABELS,
     METRIC_DOMAIN_LABELS,
     METRIC_TIER_LABELS,
     RUN_STATUS_LABELS,
@@ -90,8 +91,8 @@ def change_requests_csv(db: Session) -> bytes:
     changes = db.scalars(select(ChangeRequest).order_by(ChangeRequest.id)).all()
     codes = {metric.id: metric.code for metric in db.scalars(select(Metric)).all()}
     headers = [
-        "变更单号", "目标", "指标", "类型", "严重度", "影响分", "影响指标数",
-        "影响报表数", "核心报表数", "状态", "申请人", "审批人", "原因", "申请时间", "决定时间",
+        "变更单号", "目标", "指标", "类型", "基线版本", "环检测结论", "严重度", "影响分", "影响指标数",
+        "影响报表数", "核心报表数", "状态", "生效版本", "申请人", "审批人", "原因", "申请时间", "决定时间",
     ]
     rows = [
         [
@@ -99,12 +100,15 @@ def change_requests_csv(db: Session) -> bytes:
             change.target_ref,
             codes.get(change.metric_id or -1, ""),
             CHANGE_KIND_LABELS.get(change.change_kind, change.change_kind),
+            change.base_version or "",
+            CYCLE_CHECK_LABELS.get(change.cycle_check_status, change.cycle_check_status),
             SEVERITY_LABELS.get(change.severity, change.severity),
             change.impact_score,
             (change.impact or {}).get("metric_count", len((change.impact or {}).get("metric_codes") or [])),
             (change.impact or {}).get("report_count", 0),
             (change.impact or {}).get("core_count", 0),
             CHANGE_STATUS_LABELS.get(change.status, change.status),
+            change.applied_version or "",
             change.requester_email,
             change.approver_email or "",
             change.reason,

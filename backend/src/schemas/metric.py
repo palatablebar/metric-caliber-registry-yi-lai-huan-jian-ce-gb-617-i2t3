@@ -35,3 +35,6 @@ class ParseIn(BaseModel):
 class FormulaIn(BaseModel):
     dsl_text: str = Field(min_length=1, max_length=1200)
     note: str | None = Field(default=None, max_length=500)
+    # 乐观并发：保存口径必须声明所基于的版本
+    base_version: int = Field(ge=1)
+    idempotency_key: str | None = Field(default=None, max_length=160)

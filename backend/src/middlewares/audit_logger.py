@@ -17,7 +17,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         try:
             path = request.url.path
-            if request.method in MUTATING and path not in SKIP_PATHS and response.status_code < 500:
+            # 幂等重放：controller 已在 request.state 标记，重放不新增任何审计（含 HTTP 层）
+            idempotent_replay = getattr(request.state, "idempotent_replay", False)
+            if (
+                request.method in MUTATING
+                and path not in SKIP_PATHS
+                and response.status_code < 500
+                and not idempotent_replay
+            ):
                 email, role = "anonymous", "anonymous"
                 header = request.headers.get("authorization", "")
                 if header.lower().startswith("bearer "):

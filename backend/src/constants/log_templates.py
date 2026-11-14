@@ -12,6 +12,8 @@ ACTIONS: dict[str, str] = {
     "change.create": "提交变更单",
     "change.approve": "批准变更单",
     "change.reject": "驳回变更单",
+    "draft.resolve": "重新基线冲突草案",
+    "draft.discard": "废弃冲突草案",
     "export.metrics": "导出指标清单",
     "export.conflicts": "导出冲突与影响面",
     "export.changes": "导出变更单",

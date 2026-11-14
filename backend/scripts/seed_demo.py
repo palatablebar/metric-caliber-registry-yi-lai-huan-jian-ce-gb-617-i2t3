@@ -123,6 +123,10 @@ def ensure_changes(db) -> int:
         exists = db.scalar(select(ChangeRequest).where(ChangeRequest.seed_key == seed_key))
         if exists is not None:
             continue
+        base_version = None
+        if metric_code and proposed_dsl:
+            metric = db.scalar(select(Metric).where(Metric.code == metric_code))
+            base_version = metric.current_version if metric else 1
         change = change_service.create_change(
             db,
             {
@@ -131,6 +135,7 @@ def ensure_changes(db) -> int:
                 "metric_code": metric_code,
                 "reason": reason,
                 "proposed_dsl": proposed_dsl,
+                "base_version": base_version,
             },
             requester=requester,
         )

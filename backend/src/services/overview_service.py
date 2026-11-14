@@ -14,8 +14,10 @@ from src.constants.enums import (
     RUN_STATUS_LABELS,
     SEVERITY_LABELS,
     ChangeStatus,
+    DraftStatus,
 )
 from src.models.change_request import ChangeRequest
+from src.models.formula_draft import FormulaDraft
 from src.models.metric import Metric
 from src.models.report import Report
 from src.models.run import Run
@@ -44,6 +46,12 @@ def overview(db: Session) -> dict:
     pending_changes = (
         db.scalar(
             select(func.count()).select_from(ChangeRequest).where(ChangeRequest.status == ChangeStatus.PENDING.value)
+        )
+        or 0
+    )
+    open_drafts = (
+        db.scalar(
+            select(func.count()).select_from(FormulaDraft).where(FormulaDraft.status == DraftStatus.OPEN.value)
         )
         or 0
     )
@@ -79,6 +87,7 @@ def overview(db: Session) -> dict:
         "parse_error_count": summary["parse_error_count"],
         "high_risk": severity_counter.get("high", 0),
         "pending_changes": pending_changes,
+        "open_drafts": open_drafts,
         "worker_alive": worker_alive(),
         "severity": [
             {"key": key, "label": SEVERITY_LABELS.get(key, key), "count": severity_counter.get(key, 0)}

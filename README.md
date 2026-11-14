@@ -51,6 +51,7 @@
 |---|---|---|---|---|---|---|
 | `Metric` 指标 | `metrics` | `models/metric.py` | `schemas/metric.py` | `metric_service` | `metric_controller` / `routes/metrics.py` | `pages/metrics.js` + `api.js` |
 | `Formula` 口径公式 | `formulas` | `models/formula.py` | `schemas/metric.py`（`FormulaIn`/`ParseIn`） | `formula_service` + `dsl_parser` | `metric_controller` / `routes/metrics.py` | `pages/metrics.js` 抽屉 |
+| `FormulaDraft` 冲突草案 | `formula_drafts` | `models/formula_draft.py` | `schemas/change.py`（`DraftResolveIn`） | `revision_service` | `draft_controller` / `routes/conflicts.py` | `pages/conflicts.js` 草案面板 |
 | `Dependency` 依赖边 | `dependencies` | `models/dependency.py` | 只读出参（dict） | `dependency_service` | `dependency_controller` / `routes/dependencies.py` | `pages/graph.js` |
 | `Report` 报表 | `reports` | `models/report.py` | 只读出参（dict） | `report_service` | `report_controller` / `routes/reports.py` | `pages/graph.js` / `pages/conflicts.js` |
 | `ChangeRequest` 变更单 | `change_requests` | `models/change_request.py` | `schemas/change.py` | `change_service` | `change_controller` / `routes/change_requests.py` | `pages/changes.js` |
@@ -76,6 +77,24 @@ UNBALANCED_PAREN / SELF_REFERENCE / NO_FIELD`。
 - **影响面** = 下游报表按权重求和（核心报表 ×3），`score >= 8` high、`>= 3` medium、否则 low；
 - 字段影响面：`impact_of_field('dwd.order.amount')` → 3 个指标 / 5 张报表 / 11 分 / high（验收数字）。
 
+### 乐观并发 · 版本基线 · 冲突草案 · 环门禁（`revision_service` + `change_service`）
+
+针对「两位分析师同时提交同一指标口径，后一次悄悄覆盖前一次、审批拿不到当时影响面」的治理：
+
+1. **提交附带基线版本**：保存口径（`POST /metrics/{id}/formulas`）与口径/公式类变更单都必须带 `base_version`（所基于的版本号）。
+2. **过期提交不覆盖、落冲突草案**：`base_version != current_version` 时提交被保留为 `FormulaDraft`（`status=open`），
+   记录 `base/head` 版本、双方签名与结构化差异（字段/过滤/聚合/维度/引用，`diff_summary`），当前口径保持不变，接口返回 **409**；
+   草案可在「冲突与影响面」页重新基线（resolve）或废弃（discard）。
+3. **变更单锁定提交时影响面与依赖图**：`impact_graph_snapshot` 在提交瞬间冻结，审批看到的是当时的影响面，不随后续提交漂移。
+4. **环检测门禁**：提交时先把「假设新口径」替换进图跑一次算法 B（`hypothetical_cycle_check`），结果随单锁定；
+   批准时复算，**只有环检测通过且审批完成才生成正式版本**；不通过返回 409，整笔不落地，原口径与原依赖图保留。
+5. **版本与依赖图同源**：每个正式 `Formula` 带 `revision`（`rev-{metric_id}-v{version}`）与 `graph_snapshot`，
+   `metrics.graph_revision` 在校验运行重建依赖边后对齐到当前公式 revision；指标详情用 `revision_aligned` 证明
+   「当前版本」与「依赖图」来自同一次提交。
+6. **幂等重放**：变更单与草案带 `idempotency_key`（未显式传入时由「人+目标+基线+DSL」派生），
+   重跑同一变更不新增版本、草案或审计记录（领域层与 `http.mutation` 两层都跳过，响应带 `replayed`）。
+   审批失败（驳回 / 环拦截 / 基线过期）不生成版本，原口径与原依赖图保持不变。
+
 ## 6. 页面（6）
 
 | # | 路由 | 说明 |
@@ -99,6 +118,7 @@ UNBALANCED_PAREN / SELF_REFERENCE / NO_FIELD`。
 | 依赖边类型 `metric/field/report` | `DependencyKind` | `ENUMS.dependencyKind` | 依赖边清单筛选、导出 |
 | 冲突类型 `filter/field/agg/dep_diff` | `ConflictKind` | `ENUMS.conflictKind` | 冲突页筛选、总览差异类型、导出 |
 | 变更类型/状态 | `ChangeKind` / `ChangeStatus` | `ENUMS.changeKind` / `ENUMS.changeStatus` | 变更单页筛选、抽屉、导出 |
+| 草案状态/环检测 | `DraftStatus` / `CycleCheckStatus` | `ENUMS.draftStatus` / `ENUMS.cycleCheck` | 冲突草案面板、变更单环检测徽标、指标详情 |
 | 严重度 `high/medium/low` | `Severity` | `ENUMS.severity` | 冲突/环/变更单徽标、总览 |
 | 角色 `admin/analyst/viewer` | `Role` + `constants/roles.py` | `js/config.js::PERMISSIONS` | 导航、按钮、403 |
 

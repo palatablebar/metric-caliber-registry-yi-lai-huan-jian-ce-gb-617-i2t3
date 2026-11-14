@@ -116,6 +116,36 @@ CHANGE_STATUS_ORDER: list[str] = [
 ]
 
 
+class DraftStatus(StrEnum):
+    """过期提交的冲突草案：开放可处理 / 已解决（重新基线或废弃）。"""
+
+    OPEN = "open"
+    RESOLVED = "resolved"
+    DISCARDED = "discarded"
+
+
+DRAFT_STATUS_LABELS: dict[str, str] = {
+    DraftStatus.OPEN.value: "待处理冲突",
+    DraftStatus.RESOLVED.value: "已重新基线",
+    DraftStatus.DISCARDED.value: "已废弃",
+}
+
+
+class CycleCheckStatus(StrEnum):
+    """提交时与批准时对假设图做环检测的结论。"""
+
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+CYCLE_CHECK_LABELS: dict[str, str] = {
+    CycleCheckStatus.NOT_RUN.value: "未检测",
+    CycleCheckStatus.PASSED.value: "环检测通过",
+    CycleCheckStatus.FAILED.value: "存在依赖环",
+}
+
+
 class ConflictKind(StrEnum):
     """同名指标口径差异的类型。"""
 

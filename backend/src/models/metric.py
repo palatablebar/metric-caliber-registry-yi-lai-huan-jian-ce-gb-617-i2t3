@@ -23,6 +23,8 @@ class Metric(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     current_version: Mapped[int] = mapped_column(Integer, default=1)
+    # 当前生效依赖图（dependencies 边）对应的提交 revision；与当前公式 revision 对齐即为同源
+    graph_revision: Mapped[str | None] = mapped_column(String(80), nullable=True)
     core_report_count: Mapped[int] = mapped_column(Integer, default=0)
     seed_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

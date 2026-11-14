@@ -50,6 +50,13 @@ def execute_run(db: Session, run: Run) -> Run:
         db.flush()
 
         dependency_stats = dependency_service.rebuild(db, metrics, parsed_by_code)
+        # 依赖图按当前口径重建后，把每个指标的图 revision 对齐到当前公式 revision，
+        # 使「当前版本」与「依赖图」可证明来自同一次提交
+        for metric in metrics:
+            formula = latest.get(metric.id)
+            if formula is not None and formula.revision:
+                metric.graph_revision = formula.revision
+        db.flush()
         payloads, reports_index, _ = graph_service.collect_inputs(db)
         summary = graph_analysis.summarize(payloads, reports_index)
 

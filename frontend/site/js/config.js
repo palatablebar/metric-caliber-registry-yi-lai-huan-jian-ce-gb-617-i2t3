@@ -62,6 +62,8 @@ export const ENUMS = {
     formula: '公式改写',
   },
   changeStatus: { pending: '待审批', approved: '已批准', rejected: '已驳回' },
+  draftStatus: { open: '待处理冲突', resolved: '已重新基线', discarded: '已废弃' },
+  cycleCheck: { not_run: '未检测', passed: '环检测通过', failed: '存在依赖环' },
   metricDomain: { trade: '交易', traffic: '流量', member: '会员', goods: '商品', finance: '财务' },
   metricTier: { core: '核心', normal: '普通' },
   metricStatus: { draft: '草稿', active: '生效中', deprecated: '已下线' },

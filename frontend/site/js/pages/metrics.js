@@ -14,6 +14,10 @@ function openDetail(view, ctx, item) {
     .get(`/api/metrics/${item.id}`)
     .then((detail) => {
       const metric = detail.metric;
+      const revisionBadge = metric.revision_aligned
+        ? `<span class="badge ok" title="revision=${esc(metric.formula_revision || '')}">版本与依赖图同源 · 同一次提交</span>`
+        : '<span class="badge warn">版本与依赖图不同源 · 依赖图待重建</span>';
+      const drafts = detail.drafts || [];
       const { root, close } = drawer({
         title: `${metric.name} · ${metric.code}`,
         subtitle: `${metric.domain_label} / ${metric.tier_label} / 版本 v${metric.current_version}`,
@@ -24,6 +28,9 @@ function openDetail(view, ctx, item) {
             ['分级', `<span class="badge ${metric.tier === 'core' ? 'high' : 'info'}">${esc(metric.tier_label)}</span>`],
             ['单位 / 负责人', `${esc(metric.unit)} · ${esc(metric.owner)}`],
             ['解析状态', `<span class="badge ${parseTone(metric.parse_status)}">${esc(ENUMS.parseStatus[metric.parse_status] || metric.parse_status)}</span>`],
+            ['同源校验', revisionBadge],
+            ['口径 revision', `<span class="mono tiny">${esc(metric.formula_revision || '—')}</span>`],
+            ['依赖图 revision', `<span class="mono tiny">${esc(metric.graph_revision || '—')}</span>`],
             ['依赖指标', (metric.deps || []).length ? esc(metric.deps.join(' / ')) : '—'],
             ['下游报表', (metric.reports || []).length ? esc(metric.reports.join(' / ')) : '—'],
             ['更新时间', fmtTime(metric.updated_at)],
@@ -39,12 +46,34 @@ function openDetail(view, ctx, item) {
             ${metric.parse_error ? `<pre class="code"><span class="err">${esc(metric.parse_error)}</span></pre>` : ''}
           </div>
           <div class="dsl-box">
+            <span class="label">提交锁定的依赖图快照 · ${esc((metric.graph_snapshot || {}).signature || '—')}</span>
+            <p class="section-note tiny">引用 deps：${esc(((metric.graph_snapshot || {}).deps || []).join(' / ') || '—')}</p>
+          </div>
+          ${
+            drafts.length
+              ? `<div class="dsl-box">
+                  <span class="label">过期提交 · 冲突草案（${drafts.length}）</span>
+                  <div class="list-tight">
+                    ${drafts
+                      .map(
+                        (d) => `<div class="impact-row">
+                          <span><span class="badge ${d.status === 'open' ? 'warn' : 'info'}">${esc(ENUMS.draftStatus[d.status] || d.status)}</span>
+                          <span class="mono tiny">基线 v${esc(d.base_version)} / 当前 v${esc(d.head_version)}</span></span>
+                          <span class="muted tiny">${esc(d.diff_summary || '—')}</span>
+                        </div>`,
+                      )
+                      .join('')}
+                  </div>
+                </div>`
+              : ''
+          }
+          <div class="dsl-box">
             <span class="label">版本历史（${(detail.history || []).length} 条）</span>
             <div class="list-tight">
               ${(detail.history || [])
                 .map(
                   (row) =>
-                    `<div class="impact-row"><span class="mono">v${esc(row.version)} · ${esc(row.author_email)}</span><span class="muted tiny">${fmtTime(row.created_at)} · ${esc(ENUMS.parseStatus[row.parse_status] || row.parse_status)}</span></div>`,
+                    `<div class="impact-row"><span class="mono">v${esc(row.version)} · ${esc(row.author_email)}</span><span class="muted tiny">${fmtTime(row.created_at)} · ${esc(ENUMS.parseStatus[row.parse_status] || row.parse_status)} · ${esc(row.revision || '—')}</span></div>`,
                 )
                 .join('')}
             </div>
@@ -52,11 +81,11 @@ function openDetail(view, ctx, item) {
           ${
             editable
               ? `<div class="dsl-box" id="dsl-editor">
-                  <span class="label">改口径 → 先解析，再决定是否保存新版本</span>
+                  <span class="label">改口径 → 先解析，再基于 <b>v${esc(metric.current_version)}</b> 提交（携带基线版本）</span>
                   ${field({ label: 'DSL 文本', name: 'dsl_text', value: metric.dsl_text })}
                   <div style="display:flex;gap:8px;flex-wrap:wrap">
                     <button class="btn sm ghost" id="parse-btn" type="button">解析预览</button>
-                    <button class="btn sm accent" id="save-dsl" type="button">保存为新版本</button>
+                    <button class="btn sm accent" id="save-dsl" type="button">基于当前版本提交</button>
                   </div>
                   <div id="parse-result"></div>
                 </div>`
@@ -87,12 +116,23 @@ ${esc(error.snippet || '')}</pre>`;
       });
       root.querySelector('#save-dsl')?.addEventListener('click', async () => {
         try {
-          await api.post(`/api/metrics/${metric.id}/formulas`, { dsl_text: input.value, note: '页面编辑' });
-          toast('已保存为新的口径版本');
+          const saved = await api.post(`/api/metrics/${metric.id}/formulas`, {
+            dsl_text: input.value,
+            note: '页面编辑',
+            base_version: metric.current_version,
+          });
+          if (saved.replayed) toast('该提交已处理过，未重复生成版本');
+          else toast('已保存为新的口径版本');
           close();
           await metricsPage.render(view, ctx);
         } catch (err) {
           const detail = err.detail || {};
+          if (err.code === 'CONFLICT' && detail.draft) {
+            resultBox.innerHTML = `<div class="error-box"><span>提交基于过期版本（基线 v${esc(detail.base_version)} / 当前 v${esc(detail.current_version)}），已保留为冲突草案，未覆盖当前口径。</span></div>
+              <p class="tiny muted">${esc(detail.draft.diff_summary || '')}</p>`;
+            toast('过期提交已转为冲突草案', 'err');
+            return;
+          }
           if (err.code === 'VALIDATION' && detail.code) {
             resultBox.innerHTML = `<pre class="code"><span class="err">${esc(`${detail.code} · 第 ${detail.column} 列：${detail.message}`)}</span>
 ${esc(detail.snippet || '')}</pre>`;

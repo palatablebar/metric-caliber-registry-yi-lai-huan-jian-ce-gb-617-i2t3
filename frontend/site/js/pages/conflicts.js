@@ -1,12 +1,12 @@
 import { api } from '../api.js';
 import { ENUMS, badgeTone, can } from '../config.js';
-import { chips, drawer, emptyState, errorBox, errorMessage, esc, field, filterBar, impactRows, kv, table, toast } from '../ui.js';
+import { chips, drawer, emptyState, errorBox, errorMessage, esc, field, filterBar, fmtTime, impactRows, kv, table, toast } from '../ui.js';
 
 const state = { severity: '', kind: '' };
 
 function variantCard(metric, index) {
   return `<div class="diff-col">
-    <h4>口径 ${String(index + 1).padStart(2, '0')} · ${esc(metric.code)}</h4>
+    <h4>口径 ${String(index + 1).padStart(2, '0')} · ${esc(metric.code)} <span class="mono tiny muted">v${esc(metric.version ?? '—')}</span></h4>
     <p class="section-note">${esc(metric.expression || '—')}</p>
     <div class="dsl-box"><span class="label">字段</span>${chips(metric.fields, { withIndex: false })}</div>
     <div class="dsl-box"><span class="label">过滤</span>${chips(metric.filters, { withIndex: false })}</div>
@@ -58,7 +58,9 @@ function openConflict(view, ctx, conflict) {
   });
 
   root.querySelector('#create-cr')?.addEventListener('click', async () => {
-    const metricCode = root.querySelector('[name=metric_code]')?.value || first.code;
+    const selectEl = root.querySelector('[name=metric_code]');
+    const metricCode = selectEl?.value || first.code;
+    const selected = conflict.metrics.find((item) => item.code === metricCode) || first;
     const reason = root.querySelector('[name=reason]')?.value || '';
     try {
       await api.post('/api/change-requests', {
@@ -66,14 +68,71 @@ function openConflict(view, ctx, conflict) {
         target_ref: metricCode,
         metric_code: metricCode,
         reason,
+        base_version: selected.version || 1,
       });
       toast('变更单已提交，等待管理员审批');
       close();
       await conflictsPage.render(view, ctx);
     } catch (err) {
-      toast(err.code === 'CONFLICT' ? '该指标已有待审批的同类变更单' : errorMessage(err), 'err');
+      if (err.code === 'CONFLICT' && err.detail?.draft) {
+        toast(`基线已过期，已转为冲突草案：${err.detail.draft.diff_summary || ''}`, 'err');
+        close();
+        await conflictsPage.render(view, ctx);
+      } else {
+        toast(err.code === 'CONFLICT' ? '该指标已有待审批的同类变更单' : errorMessage(err), 'err');
+      }
     }
   });
+}
+
+async function renderDrafts(view, ctx) {
+  const panel = view.querySelector('#drafts-panel');
+  if (!panel) return;
+  try {
+    const data = await api.get('/api/conflicts/drafts', { status: 'open', limit: 50 });
+    if (!data.items.length) {
+      panel.innerHTML = `<div class="panel-head"><h2>过期提交 · 冲突草案</h2><span class="meta">0 条</span></div>
+        <div class="panel-body"><p class="muted tiny">没有基于过期版本的提交。所有口径提交都基于当前版本时，这里保持为空。</p></div>`;
+      return;
+    }
+    const writable = can(ctx.user.role, 'change:write');
+    panel.innerHTML = `<div class="panel-head">
+        <h2>过期提交 · 冲突草案</h2><span class="meta">${data.total} 条待处理</span>
+      </div>
+      ${table({
+        rows: data.items,
+        columns: [
+          { key: 'metric_code', label: '指标', className: 'mono' },
+          { key: 'base_version', label: '基线 / 当前', className: 'mono', render: (row) => `v${esc(row.base_version)} / v${esc(row.head_version)}` },
+          { key: 'diff_summary', label: '与当前口径差异', render: (row) => `<span class="tiny">${esc(row.diff_summary || '—')}</span>` },
+          { key: 'source', label: '来源' },
+          { key: 'author_email', label: '提交人', className: 'mono' },
+          { key: 'created_at', label: '时间', render: (row) => `<span class="tiny">${fmtTime(row.created_at)}</span>` },
+          {
+            key: 'actions',
+            label: '操作',
+            render: (row) => (writable
+              ? `<button class="btn sm ghost" data-resolve="${esc(row.id)}">重新基线</button>
+                 <button class="btn sm ghost" data-discard="${esc(row.id)}">废弃</button>`
+              : '—'),
+          },
+        ],
+        empty: { title: '没有待处理草案' },
+      })}`;
+    const act = async (id, action) => {
+      try {
+        await api.patch(`/api/conflicts/drafts/${id}`, { action, note: action === 'discard' ? '页面废弃' : '已基于最新版本重新提交' });
+        toast(action === 'discard' ? '草案已废弃' : '草案已标记重新基线');
+        await conflictsPage.render(view, ctx);
+      } catch (err) {
+        toast(errorMessage(err), 'err');
+      }
+    };
+    panel.querySelectorAll('[data-resolve]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.resolve, 'resolve')));
+    panel.querySelectorAll('[data-discard]').forEach((btn) => btn.addEventListener('click', () => act(btn.dataset.discard, 'discard')));
+  } catch (err) {
+    panel.innerHTML = `<div class="panel-body"><div class="error-box"><span>${esc(errorMessage(err))}</span></div></div>`;
+  }
 }
 
 export const conflictsPage = {
@@ -120,7 +179,8 @@ export const conflictsPage = {
           ],
           empty: { title: '没有匹配的冲突', hint: '调整筛选条件，或改一条口径后再跑校验。' },
         })}
-      </section>`;
+      </section>
+      <section class="panel" id="drafts-panel"></section>`;
 
     const filters = view.querySelector('#conflict-filters');
     filters?.addEventListener('change', () => {
@@ -136,13 +196,14 @@ export const conflictsPage = {
         toast(errorMessage(err), 'err');
       }
     });
-    view.querySelectorAll('table.data tbody tr').forEach((row) => {
+    view.querySelector('section.panel table.data tbody')?.querySelectorAll('tr').forEach((row) => {
       row.addEventListener('click', () => {
         const name = row.querySelector('b')?.textContent;
         const item = data.items.find((entry) => entry.name === name);
         if (item) openConflict(view, ctx, item);
       });
     });
+    await renderDrafts(view, ctx);
   },
 };
 

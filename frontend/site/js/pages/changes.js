@@ -14,6 +14,8 @@ const EXPORTS = [
 function openChange(view, ctx, change) {
   const approver = can(ctx.user.role, 'change:approve');
   const impact = change.impact || {};
+  const locked = change.impact_graph_snapshot || {};
+  const cycleTone = change.cycle_check_status === 'failed' ? 'danger' : change.cycle_check_status === 'passed' ? 'ok' : 'info';
   const { root, close } = drawer({
     title: `${change.cr_no} · ${change.change_kind_label}`,
     subtitle: `${change.target_ref} · 状态 ${change.status_label}`,
@@ -21,16 +23,30 @@ function openChange(view, ctx, change) {
       ${kv([
         ['目标', `<span class="mono">${esc(change.target_ref)}</span>`],
         ['类型', esc(change.change_kind_label)],
+        ['基线版本', change.base_version ? `<span class="mono">v${esc(change.base_version)}</span>` : '—'],
         ['严重度', `<span class="badge ${badgeTone(change.severity)}">${esc(ENUMS.severity[change.severity])}</span>`],
         ['影响分', `<span class="mono">${esc(change.impact_score)}</span>（核心报表 ×3）`],
+        ['环检测', `<span class="badge ${cycleTone}">${esc(change.cycle_check_label || change.cycle_check_status)}</span>`],
+        ['影响锁定', locked.locked_at_version ? `提交时 v${esc(locked.locked_at_version)} 的影响面与依赖图已锁定` : '—'],
         ['影响指标', `${esc(impact.metric_count ?? (impact.metric_codes || []).length)} 个`],
         ['影响报表', `${esc(impact.report_count || 0)} 张`],
+        ['生效版本', change.applied_version ? `<span class="mono">v${esc(change.applied_version)} · ${esc(change.applied_revision || '')}</span>` : '未生成（审批通过后才出版本）'],
         ['申请人', esc(change.requester_email)],
         ['申请时间', fmtTime(change.created_at)],
         ['审批人', esc(change.approver_email || '—')],
         ['审批结论', esc(change.decision_note || '—')],
         ['决定时间', fmtTime(change.decided_at)],
       ])}
+      ${
+        change.cycle_check_status === 'failed'
+          ? `<div class="dsl-box"><span class="label">环检测拦截明细</span>
+              <div class="list-tight">${(change.cycle_check_detail?.cycles || [])
+                .map((c) => `<div class="impact-row"><span class="mono">${esc((c.path || []).join(' → '))}</span><span class="muted tiny">长度 ${esc(c.length)}</span></div>`)
+                .join('')}</div>
+              <p class="section-note tiny">该口径会引入依赖环，批准将被拦截，需先打断引用链。</p>
+            </div>`
+          : ''
+      }
       <div class="dsl-box">
         <span class="label">变更原因</span>
         <p class="section-note">${esc(change.reason || '—')}</p>
@@ -41,13 +57,13 @@ function openChange(view, ctx, change) {
           : ''
       }
       <div class="dsl-box">
-        <span class="label">影响面 · 算法 B 计算</span>
+        <span class="label">影响面 · 提交时算法 B 计算并锁定</span>
         ${impactRows(impact)}
       </div>
       ${
         approver && change.status === 'pending'
           ? `<div class="dsl-box">
-              <span class="label">管理员审批</span>
+              <span class="label">管理员审批（环检测通过 + 审批完成才生成正式版本）</span>
               ${field({ label: '审批备注', name: 'note', value: '', placeholder: '批准理由 / 驳回原因' })}
               <div style="display:flex;gap:8px">
                 <button class="btn sm accent" id="approve" type="button">批准</button>
@@ -62,15 +78,21 @@ function openChange(view, ctx, change) {
 
   const decide = async (status) => {
     try {
-      await api.patch(`/api/change-requests/${change.id}`, {
+      const res = await api.patch(`/api/change-requests/${change.id}`, {
         status,
         note: root.querySelector('[name=note]')?.value?.trim() || null,
       });
-      toast(status === 'approved' ? '已批准变更单' : '已驳回变更单');
+      if (res.replayed) toast('该变更单已审批过，未重复生成版本或审计');
+      else toast(status === 'approved' ? '已批准变更单并生成正式版本' : '已驳回变更单，原口径与依赖图保留');
       close();
       await changesPage.render(view, ctx);
     } catch (err) {
-      toast(errorMessage(err), 'err');
+      if (err.code === 'CONFLICT') {
+        if (err.detail?.reason === 'cycle') toast('批准被拦截：新口径会引入依赖环', 'err');
+        else toast(errorMessage(err), 'err');
+      } else {
+        toast(errorMessage(err), 'err');
+      }
     }
   };
   root.querySelector('#approve')?.addEventListener('click', () => decide('approved'));
@@ -150,11 +172,31 @@ export const changesPage = {
             { key: 'target_ref', label: '目标', className: 'mono' },
             { key: 'change_kind_label', label: '类型' },
             {
+              key: 'base_version',
+              label: '基线',
+              className: 'num',
+              render: (row) => (row.base_version ? `v${esc(row.base_version)}` : '—'),
+            },
+            {
+              key: 'cycle_check_status',
+              label: '环检测',
+              render: (row) => {
+                const tone = row.cycle_check_status === 'failed' ? 'danger' : row.cycle_check_status === 'passed' ? 'ok' : 'info';
+                return `<span class="badge ${tone}">${esc(ENUMS.cycleCheck[row.cycle_check_status] || row.cycle_check_status)}</span>`;
+              },
+            },
+            {
               key: 'severity',
               label: '严重度',
               render: (row) => `<span class="badge ${badgeTone(row.severity)}">${esc(ENUMS.severity[row.severity])}</span>`,
             },
             { key: 'impact_score', label: '影响分', className: 'num' },
+            {
+              key: 'applied_version',
+              label: '生效版本',
+              className: 'num',
+              render: (row) => (row.applied_version ? `v${esc(row.applied_version)}` : '<span class="muted tiny">未生成</span>'),
+            },
             {
               key: 'impact',
               label: '影响面',

@@ -231,6 +231,7 @@ def find_conflicts(metrics: list[dict], reports_by_metric: dict[str, list[dict]]
                     {
                         "code": item["code"],
                         "name": item["name"],
+                        "version": item.get("version"),
                         "domain": item.get("domain"),
                         "tier": item.get("tier"),
                         "owner": item.get("owner"),

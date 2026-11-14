@@ -24,5 +24,12 @@ class Formula(Base):
     signature: Mapped[str] = mapped_column(String(64), default="", index=True)
     author_email: Mapped[str] = mapped_column(String(160), default="seed@metricreg.io")
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 版本与依赖图同源证明：revision 同值表示当前口径与所展示依赖图来自同一次提交
+    revision: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    # 提交来源（seed / formula_save / change_request）与来源变更单
+    source: Mapped[str] = mapped_column(String(20), default="seed")
+    change_request_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # 该版本提交时刻锁定的依赖图快照（指标/字段引用，不随后续重建漂移）
+    graph_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     seed_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
